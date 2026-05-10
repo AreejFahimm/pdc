@@ -1,26 +1,23 @@
 // ============================================================================
-// separable_sequential_convolution.cpp
-// V3 – Sequential Separable Gaussian Convolution
-// PDC Spring 2026 Project
-//
-// Compile:
-//    g++ -O3 separable_sequential_convolution.cpp -o separable_v3
-//
-// Run:
-//    ./separable_v3
+// V3 - Sequential Separable Gaussian Convolution
 // ============================================================================
 
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
-#include <cstdlib>
 
-// ============================================================================
-// Generate 1D Gaussian Kernel
-// ============================================================================
-void generateGaussianKernel1D(std::vector<float>& kernel,
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+using namespace std;
+
+void generateGaussianKernel1D(vector<float>& kernel,
                               int radius,
                               float sigma)
 {
@@ -33,7 +30,7 @@ void generateGaussianKernel1D(std::vector<float>& kernel,
     for (int i = -radius; i <= radius; i++) {
 
         float value =
-            std::exp(-(i * i) /
+            exp(-(i * i) /
             (2.0f * sigma * sigma));
 
         kernel[i + radius] = value;
@@ -41,14 +38,10 @@ void generateGaussianKernel1D(std::vector<float>& kernel,
         sum += value;
     }
 
-    // Normalize kernel
     for (float& v : kernel)
         v /= sum;
 }
 
-// ============================================================================
-// Horizontal Pass
-// ============================================================================
 void horizontalPass(const float* input,
                     float* temp,
                     int width,
@@ -65,8 +58,8 @@ void horizontalPass(const float* input,
             for (int k = -radius; k <= radius; k++) {
 
                 int cc =
-                    std::max(0,
-                    std::min(width - 1, c + k));
+                    max(0,
+                    min(width - 1, c + k));
 
                 sum +=
                     input[r * width + cc] *
@@ -78,9 +71,6 @@ void horizontalPass(const float* input,
     }
 }
 
-// ============================================================================
-// Vertical Pass
-// ============================================================================
 void verticalPass(const float* temp,
                   float* output,
                   int width,
@@ -97,8 +87,8 @@ void verticalPass(const float* temp,
             for (int k = -radius; k <= radius; k++) {
 
                 int rr =
-                    std::max(0,
-                    std::min(height - 1, r + k));
+                    max(0,
+                    min(height - 1, r + k));
 
                 sum +=
                     temp[rr * width + c] *
@@ -110,207 +100,105 @@ void verticalPass(const float* temp,
     }
 }
 
-// ============================================================================
-// Full Separable Convolution
-// ============================================================================
-void separableConvolution(const float* input,
-                          float* temp,
-                          float* output,
-                          int width,
-                          int height,
-                          const float* kernel,
-                          int radius)
-{
-    // Horizontal blur
-    horizontalPass(
-        input,
-        temp,
-        width,
-        height,
-        kernel,
-        radius
-    );
-
-    // Vertical blur
-    verticalPass(
-        temp,
-        output,
-        width,
-        height,
-        kernel,
-        radius
-    );
-}
-
-// ============================================================================
-// Main Driver
-// ============================================================================
 int main()
 {
-    // =====================================================================
-    // Image Parameters
-    // =====================================================================
-    const int WIDTH  = 2048;
-    const int HEIGHT = 2048;
+    const char* IMAGE_PATH = "1024.png";
 
-    const int RADIUS = 8;
-    const float SIGMA = 4.0f;
+    int width, height, channels;
 
-    const int N = WIDTH * HEIGHT;
+    unsigned char* img =
+        stbi_load(
+            IMAGE_PATH,
+            &width,
+            &height,
+            &channels,
+            1
+        );
 
-    // =====================================================================
-    // Display Info
-    // =====================================================================
-    std::cout << "=====================================================\n";
-    std::cout << " Sequential Separable Gaussian Convolution (V3)\n";
-    std::cout << "=====================================================\n";
-
-    std::cout << "Image Size    : "
-              << WIDTH << " x " << HEIGHT << "\n";
-
-    std::cout << "Kernel Radius : "
-              << RADIUS << "\n";
-
-    std::cout << "1D Kernel Size: "
-              << (2 * RADIUS + 1)
-              << "\n\n";
-
-    // =====================================================================
-    // Allocate Memory
-    // =====================================================================
-    std::vector<float> input(N);
-    std::vector<float> temp(N);
-    std::vector<float> output(N);
-
-    std::vector<float> kernel;
-
-    // =====================================================================
-    // Generate Random Image
-    // =====================================================================
-    for (int i = 0; i < N; i++) {
-
-        input[i] =
-            static_cast<float>(rand() % 256) / 255.0f;
+    if (!img) {
+        cout << "Failed to load image.\n";
+        return -1;
     }
 
-    // =====================================================================
-    // Generate Gaussian Kernel
-    // =====================================================================
+    int N = width * height;
+
+    vector<float> input(N);
+    vector<float> temp(N);
+    vector<float> output(N);
+
+    for (int i = 0; i < N; i++) {
+        input[i] = img[i] / 255.0f;
+    }
+
+    stbi_image_free(img);
+
+    //     const int RADII[]  = {1, 2, 3, 5};
+// const float SIGMAS[] = {0.8f, 1.2f, 1.8f, 2.8f};
+
+    const int RADIUS = 5;
+    const float SIGMA = 2.8f;
+
+    vector<float> kernel;
+
     generateGaussianKernel1D(
         kernel,
         RADIUS,
         SIGMA
     );
 
-    // =====================================================================
-    // Warm-up Run
-    // =====================================================================
-    separableConvolution(
+    auto start =
+        chrono::high_resolution_clock::now();
+
+    horizontalPass(
         input.data(),
         temp.data(),
-        output.data(),
-        WIDTH,
-        HEIGHT,
+        width,
+        height,
         kernel.data(),
         RADIUS
     );
 
-    // =====================================================================
-    // Timed Benchmark
-    // =====================================================================
-    const int REPS = 3;
+    verticalPass(
+        temp.data(),
+        output.data(),
+        width,
+        height,
+        kernel.data(),
+        RADIUS
+    );
 
-    double totalMs = 0.0;
+    auto end =
+        chrono::high_resolution_clock::now();
 
-    for (int rep = 0; rep < REPS; rep++) {
+    double ms =
+        chrono::duration<double, milli>
+        (end - start).count();
 
-        auto start =
-            std::chrono::high_resolution_clock::now();
+    cout << fixed << setprecision(2);
+    cout << "Execution Time: " << ms << " ms\n";
 
-        separableConvolution(
-            input.data(),
-            temp.data(),
-            output.data(),
-            WIDTH,
-            HEIGHT,
-            kernel.data(),
-            RADIUS
-        );
+    vector<unsigned char> outImage(N);
 
-        auto end =
-            std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < N; i++) {
 
-        double ms =
-            std::chrono::duration<double,
-            std::milli>(end - start).count();
+        float v =
+            max(0.0f,
+            min(1.0f, output[i]));
 
-        totalMs += ms;
+        outImage[i] =
+            static_cast<unsigned char>(v * 255.0f);
     }
 
-    double avgMs = totalMs / REPS;
+    stbi_write_png(
+        "output_v3.png",
+        width,
+        height,
+        1,
+        outImage.data(),
+        width
+    );
 
-    // =====================================================================
-    // Performance Metrics
-    // =====================================================================
-
-    double pixelsProcessed =
-        static_cast<double>(WIDTH) * HEIGHT;
-
-    double mpixPerSec =
-        (pixelsProcessed / 1e6) / (avgMs / 1000.0);
-
-    // Separable convolution:
-    // 2 passes × (2R+1) multiply-adds
-    long long operationsPerPixel =
-        2 * (2 * RADIUS + 1) * 2;
-
-    double totalOps =
-        pixelsProcessed * operationsPerPixel;
-
-    double gflops =
-        totalOps / (avgMs / 1000.0) / 1e9;
-
-    // =====================================================================
-    // Results
-    // =====================================================================
-
-    std::cout << std::fixed
-              << std::setprecision(2);
-
-    std::cout << "Average Execution Time : "
-              << avgMs << " ms\n";
-
-    std::cout << "Throughput             : "
-              << mpixPerSec << " MPix/s\n";
-
-    std::cout << "Estimated GFLOPS       : "
-              << gflops << " GFLOPS\n";
-
-    // =====================================================================
-    // Complexity Comparison
-    // =====================================================================
-
-    int naiveOps =
-        (2 * RADIUS + 1) *
-        (2 * RADIUS + 1);
-
-    int separableOps =
-        2 * (2 * RADIUS + 1);
-
-    std::cout << "\nComplexity Reduction:\n";
-
-    std::cout << "Naive 2D Ops/Pixel     : "
-              << naiveOps << "\n";
-
-    std::cout << "Separable Ops/Pixel    : "
-              << separableOps << "\n";
-
-    std::cout << "Reduction Factor       : "
-              << static_cast<float>(naiveOps)
-                 / separableOps
-              << "x\n";
-
-    std::cout << "\nBenchmark complete.\n";
+    cout << "Saved: output_v3.png\n";
 
     return 0;
 }

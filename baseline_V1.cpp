@@ -1,30 +1,32 @@
 // ============================================================================
-// baseline_sequential_naive_2d_convolution.cpp
-// V1 – Sequential Naive 2D Gaussian Convolution
-// PDC Spring 2026 Project Baseline Version
-//
-// Compile:
-//    g++ -O2 baseline_sequential_naive_2d_convolution.cpp -o baseline
-//
-// Run:
-//    ./baseline
+// V1 - Sequential Naive 2D Gaussian Convolution
 // ============================================================================
 
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
-#include <cstdlib>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+using namespace std;
 
 // ============================================================================
 // Generate 2D Gaussian Kernel
 // ============================================================================
-void generateGaussianKernel2D(std::vector<float>& kernel,
+
+void generateGaussianKernel2D(vector<float>& kernel,
                               int radius,
                               float sigma)
 {
     int size = 2 * radius + 1;
+
     kernel.resize(size * size);
 
     float sum = 0.0f;
@@ -32,15 +34,16 @@ void generateGaussianKernel2D(std::vector<float>& kernel,
     for (int y = -radius; y <= radius; y++) {
         for (int x = -radius; x <= radius; x++) {
 
-            float value = std::exp(-(x * x + y * y) /
-                          (2.0f * sigma * sigma));
+            float value =
+                exp(-(x * x + y * y) /
+                (2.0f * sigma * sigma));
 
             kernel[(y + radius) * size + (x + radius)] = value;
+
             sum += value;
         }
     }
 
-    // Normalize kernel
     for (float& v : kernel)
         v /= sum;
 }
@@ -48,6 +51,7 @@ void generateGaussianKernel2D(std::vector<float>& kernel,
 // ============================================================================
 // Sequential Naive 2D Convolution
 // ============================================================================
+
 void convolution2D(const float* input,
                    float* output,
                    int width,
@@ -58,20 +62,29 @@ void convolution2D(const float* input,
     int kernelSize = 2 * radius + 1;
 
     for (int r = 0; r < height; r++) {
+
         for (int c = 0; c < width; c++) {
 
             float sum = 0.0f;
 
-            // Full 2D convolution window
             for (int ky = -radius; ky <= radius; ky++) {
+
                 for (int kx = -radius; kx <= radius; kx++) {
 
-                    int rr = std::max(0, std::min(height - 1, r + ky));
-                    int cc = std::max(0, std::min(width - 1,  c + kx));
+                    int rr =
+                        max(0,
+                        min(height - 1, r + ky));
 
-                    float pixel  = input[rr * width + cc];
-                    float weight = kernel[(ky + radius) * kernelSize
-                                           + (kx + radius)];
+                    int cc =
+                        max(0,
+                        min(width - 1, c + kx));
+
+                    float pixel =
+                        input[rr * width + cc];
+
+                    float weight =
+                        kernel[(ky + radius) * kernelSize
+                             + (kx + radius)];
 
                     sum += pixel * weight;
                 }
@@ -83,108 +96,99 @@ void convolution2D(const float* input,
 }
 
 // ============================================================================
-// Main Driver
+// Main
 // ============================================================================
+
 int main()
 {
-    // Image dimensions
-    const int WIDTH  = 2048;
-    const int HEIGHT = 2048;
+    const char* IMAGE_PATH = "1024.png";
 
-    // Gaussian radius
-    const int RADIUS = 8;
-    const float SIGMA = 4.0f;
+    int width, height, channels;
 
-    const int N = WIDTH * HEIGHT;
+    unsigned char* img =
+        stbi_load(
+            IMAGE_PATH,
+            &width,
+            &height,
+            &channels,
+            1
+        );
 
-    std::cout << "======================================================\n";
-    std::cout << " Sequential Naive 2D Gaussian Convolution Baseline\n";
-    std::cout << "======================================================\n";
-    std::cout << "Image Size : " << WIDTH << " x " << HEIGHT << "\n";
-    std::cout << "Kernel Radius : " << RADIUS << "\n";
-    std::cout << "Kernel Size : " << (2 * RADIUS + 1)
-              << " x " << (2 * RADIUS + 1) << "\n\n";
+    if (!img) {
+        cout << "Failed to load image.\n";
+        return -1;
+    }
 
-    // Allocate memory
-    std::vector<float> input(N);
-    std::vector<float> output(N);
-    std::vector<float> kernel;
+    int N = width * height;
 
-    // Generate random image
+    vector<float> input(N);
+    vector<float> output(N);
+
     for (int i = 0; i < N; i++) {
-        input[i] = static_cast<float>(rand() % 256) / 255.0f;
+        input[i] = img[i] / 255.0f;
     }
 
-    // Generate Gaussian kernel
-    generateGaussianKernel2D(kernel, RADIUS, SIGMA);
+    stbi_image_free(img);
 
-    // =====================================================================
-    // Warm-up run
-    // =====================================================================
-    convolution2D(input.data(),
-                  output.data(),
-                  WIDTH,
-                  HEIGHT,
-                  kernel.data(),
-                  RADIUS);
 
-    // =====================================================================
-    // Timed execution
-    // =====================================================================
-    const int REPS = 3;
-    double totalMs = 0.0;
+//     const int RADII[]  = {1, 2, 3, 5};
+// const float SIGMAS[] = {0.8f, 1.2f, 1.8f, 2.8f};
 
-    for (int rep = 0; rep < REPS; rep++) {
+    const int RADIUS = 3;
+    const float SIGMA = 1.8f;
 
-        auto start = std::chrono::high_resolution_clock::now();
+    vector<float> kernel;
 
-        convolution2D(input.data(),
-                      output.data(),
-                      WIDTH,
-                      HEIGHT,
-                      kernel.data(),
-                      RADIUS);
+    generateGaussianKernel2D(
+        kernel,
+        RADIUS,
+        SIGMA
+    );
 
-        auto end = std::chrono::high_resolution_clock::now();
+    auto start =
+        chrono::high_resolution_clock::now();
 
-        double ms = std::chrono::duration<double, std::milli>(end - start).count();
+    convolution2D(
+        input.data(),
+        output.data(),
+        width,
+        height,
+        kernel.data(),
+        RADIUS
+    );
 
-        totalMs += ms;
+    auto end =
+        chrono::high_resolution_clock::now();
+
+    double ms =
+        chrono::duration<double, milli>
+        (end - start).count();
+
+    cout << fixed << setprecision(2);
+    cout << "Execution Time: " << ms << " ms\n";
+
+    vector<unsigned char> outImage(N);
+
+    for (int i = 0; i < N; i++) {
+
+        float v =
+            max(0.0f,
+            min(1.0f, output[i]));
+
+        outImage[i] =
+            static_cast<unsigned char>(v * 255.0f);
     }
 
-    double avgMs = totalMs / REPS;
+    stbi_write_png(
+        "output_v1.png",
+        width,
+        height,
+        1,
+        outImage.data(),
+        width
+    );
 
-    // =====================================================================
-    // Performance Metrics
-    // =====================================================================
-
-    double pixelsProcessed = static_cast<double>(WIDTH) * HEIGHT;
-
-    double mpixPerSec = (pixelsProcessed / 1e6) / (avgMs / 1000.0);
-
-    long long operationsPerPixel =
-        (2 * RADIUS + 1) * (2 * RADIUS + 1) * 2;
-
-    double totalOps = pixelsProcessed * operationsPerPixel;
-
-    double gflops = totalOps / (avgMs / 1000.0) / 1e9;
-
-    // =====================================================================
-    // Output Results
-    // =====================================================================
-
-    std::cout << std::fixed << std::setprecision(2);
-
-    std::cout << "Average Execution Time : "
-              << avgMs << " ms\n";
-
-    std::cout << "Throughput             : "
-              << mpixPerSec << " MPix/s\n";
-
-    std::cout << "Estimated GFLOPS       : "
-              << gflops << " GFLOPS\n";
-
-    std::cout << "\nBaseline benchmark complete.\n";
+    cout << "Saved: output_v1.png\n";
 
     return 0;
 }

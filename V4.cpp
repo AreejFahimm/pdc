@@ -1,32 +1,25 @@
 // ============================================================================
-// optimized_simd_openmp_tiled_convolution.cpp
-// V4 – OpenMP + SIMD + Cache-Tiled Separable Gaussian Convolution
-// PDC Spring 2026 Project
-//
-// Compile:
-//    g++ -O3 -mavx2 -mfma -fopenmp \
-//    optimized_simd_openmp_tiled_convolution.cpp -o v4
-//
-// Run:
-//    ./v4 [threads]
-//
-// Example:
-//    ./v4 8
+// V4 - SIMD + OpenMP + Tiling Gaussian Convolution
 // ============================================================================
 
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
-#include <cstdlib>
 #include <immintrin.h>
 #include <omp.h>
 
-// ============================================================================
-// Generate 1D Gaussian Kernel
-// ============================================================================
-void generateGaussianKernel1D(std::vector<float>& kernel,
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+using namespace std;
+
+void generateGaussianKernel1D(vector<float>& kernel,
                               int radius,
                               float sigma)
 {
@@ -39,7 +32,7 @@ void generateGaussianKernel1D(std::vector<float>& kernel,
     for (int i = -radius; i <= radius; i++) {
 
         float value =
-            std::exp(-(i * i) /
+            exp(-(i * i) /
             (2.0f * sigma * sigma));
 
         kernel[i + radius] = value;
@@ -47,14 +40,10 @@ void generateGaussianKernel1D(std::vector<float>& kernel,
         sum += value;
     }
 
-    // Normalize
     for (float& v : kernel)
         v /= sum;
 }
 
-// ============================================================================
-// SIMD Horizontal Pass (AVX2)
-// ============================================================================
 void horizontalPassSIMD(const float* input,
                         float* temp,
                         int width,
@@ -70,7 +59,6 @@ void horizontalPassSIMD(const float* input,
 
         int c = 0;
 
-        // SIMD vectorized region
         for (; c <= width - 8; c += 8) {
 
             __m256 sum =
@@ -83,8 +71,8 @@ void horizontalPassSIMD(const float* input,
                 for (int lane = 0; lane < 8; lane++) {
 
                     int cc =
-                        std::max(0,
-                        std::min(width - 1,
+                        max(0,
+                        min(width - 1,
                         c + lane + k));
 
                     buffer[lane] = src[cc];
@@ -96,7 +84,6 @@ void horizontalPassSIMD(const float* input,
                 __m256 weights =
                     _mm256_set1_ps(kernel[k + radius]);
 
-                // Fused Multiply Add
                 sum =
                     _mm256_fmadd_ps(
                         pixels,
@@ -108,7 +95,6 @@ void horizontalPassSIMD(const float* input,
             _mm256_storeu_ps(dst + c, sum);
         }
 
-        // Remaining scalar pixels
         for (; c < width; c++) {
 
             float sum = 0.0f;
@@ -116,8 +102,8 @@ void horizontalPassSIMD(const float* input,
             for (int k = -radius; k <= radius; k++) {
 
                 int cc =
-                    std::max(0,
-                    std::min(width - 1,
+                    max(0,
+                    min(width - 1,
                     c + k));
 
                 sum +=
@@ -130,10 +116,6 @@ void horizontalPassSIMD(const float* input,
     }
 }
 
-// ============================================================================
-// Cache-Tiled Matrix Transpose
-// Improves column locality
-// ============================================================================
 void transposeTiled(const float* input,
                     float* output,
                     int width,
@@ -146,11 +128,8 @@ void transposeTiled(const float* input,
 
         for (int j = 0; j < width; j += TILE) {
 
-            int iMax =
-                std::min(i + TILE, height);
-
-            int jMax =
-                std::min(j + TILE, width);
+            int iMax = min(i + TILE, height);
+            int jMax = min(j + TILE, width);
 
             for (int ii = i; ii < iMax; ii++) {
 
@@ -164,247 +143,129 @@ void transposeTiled(const float* input,
     }
 }
 
-// ============================================================================
-// Full Optimized Separable Convolution
-// ============================================================================
-void optimizedConvolution(const float* input,
-                          float* temp,
-                          float* output,
-                          float* transposed1,
-                          float* transposed2,
-                          int width,
-                          int height,
-                          const float* kernel,
-                          int radius)
-{
-    // ============================================================
-    // Pass 1: Horizontal SIMD Blur
-    // ============================================================
-    horizontalPassSIMD(
-        input,
-        temp,
-        width,
-        height,
-        kernel,
-        radius
-    );
-
-    // ============================================================
-    // Transpose for cache-friendly vertical pass
-    // ============================================================
-    transposeTiled(
-        temp,
-        transposed1,
-        width,
-        height
-    );
-
-    // ============================================================
-    // Pass 2: Horizontal SIMD Blur on transposed image
-    // (equivalent to vertical blur)
-    // ============================================================
-    horizontalPassSIMD(
-        transposed1,
-        transposed2,
-        height,
-        width,
-        kernel,
-        radius
-    );
-
-    // ============================================================
-    // Final transpose back
-    // ============================================================
-    transposeTiled(
-        transposed2,
-        output,
-        height,
-        width
-    );
-}
-
-// ============================================================================
-// Main Driver
-// ============================================================================
 int main(int argc, char* argv[])
 {
-    // =====================================================================
-    // User-controlled thread count
-    // =====================================================================
     int NUM_THREADS =
         (argc > 1)
-        ? std::atoi(argv[1])
+        ? atoi(argv[1])
         : omp_get_max_threads();
 
     omp_set_num_threads(NUM_THREADS);
 
-    // =====================================================================
-    // Image Parameters
-    // =====================================================================
-    const int WIDTH  = 2048;
-    const int HEIGHT = 2048;
+    const char* IMAGE_PATH = "1024.png";
 
-    const int RADIUS = 8;
-    const float SIGMA = 4.0f;
+    int width, height, channels;
 
-    const int N = WIDTH * HEIGHT;
+    unsigned char* img =
+        stbi_load(
+            IMAGE_PATH,
+            &width,
+            &height,
+            &channels,
+            1
+        );
 
-    // =====================================================================
-    // Display Info
-    // =====================================================================
-    std::cout << "=====================================================\n";
-    std::cout << " OpenMP + SIMD + Tiling Convolution (V4)\n";
-    std::cout << "=====================================================\n";
-
-    std::cout << "Image Size    : "
-              << WIDTH << " x " << HEIGHT << "\n";
-
-    std::cout << "Kernel Radius : "
-              << RADIUS << "\n";
-
-    std::cout << "OMP Threads   : "
-              << NUM_THREADS << "\n";
-
-    std::cout << "SIMD Width    : AVX2 (8 floats)\n";
-
-    std::cout << "Tile Size     : 32 x 32\n\n";
-
-    // =====================================================================
-    // Allocate Memory
-    // =====================================================================
-    std::vector<float> input(N);
-    std::vector<float> temp(N);
-    std::vector<float> output(N);
-
-    std::vector<float> transposed1(N);
-    std::vector<float> transposed2(N);
-
-    std::vector<float> kernel;
-
-    // =====================================================================
-    // Generate Random Image
-    // =====================================================================
-    for (int i = 0; i < N; i++) {
-
-        input[i] =
-            static_cast<float>(rand() % 256)
-            / 255.0f;
+    if (!img) {
+        cout << "Failed to load image.\n";
+        return -1;
     }
 
-    // =====================================================================
-    // Generate Gaussian Kernel
-    // =====================================================================
+    int N = width * height;
+
+    vector<float> input(N);
+    vector<float> temp(N);
+    vector<float> output(N);
+    vector<float> transposed1(N);
+    vector<float> transposed2(N);
+
+    for (int i = 0; i < N; i++) {
+        input[i] = img[i] / 255.0f;
+    }
+
+    stbi_image_free(img);
+
+
+    //     const int RADII[]  = {1, 2, 3, 5};
+// const float SIGMAS[] = {0.8f, 1.2f, 1.8f, 2.8f};
+
+    const int RADIUS = 5;
+    const float SIGMA = 2.8f;
+
+    vector<float> kernel;
+
     generateGaussianKernel1D(
         kernel,
         RADIUS,
         SIGMA
     );
 
-    // =====================================================================
-    // Warm-up Run
-    // =====================================================================
-    optimizedConvolution(
+    auto start =
+        chrono::high_resolution_clock::now();
+
+    horizontalPassSIMD(
         input.data(),
         temp.data(),
-        output.data(),
-        transposed1.data(),
-        transposed2.data(),
-        WIDTH,
-        HEIGHT,
+        width,
+        height,
         kernel.data(),
         RADIUS
     );
 
-    // =====================================================================
-    // Timed Benchmark
-    // =====================================================================
-    const int REPS = 3;
+    transposeTiled(
+        temp.data(),
+        transposed1.data(),
+        width,
+        height
+    );
 
-    double totalMs = 0.0;
+    horizontalPassSIMD(
+        transposed1.data(),
+        transposed2.data(),
+        height,
+        width,
+        kernel.data(),
+        RADIUS
+    );
 
-    for (int rep = 0; rep < REPS; rep++) {
+    transposeTiled(
+        transposed2.data(),
+        output.data(),
+        height,
+        width
+    );
 
-        auto start =
-            std::chrono::high_resolution_clock::now();
+    auto end =
+        chrono::high_resolution_clock::now();
 
-        optimizedConvolution(
-            input.data(),
-            temp.data(),
-            output.data(),
-            transposed1.data(),
-            transposed2.data(),
-            WIDTH,
-            HEIGHT,
-            kernel.data(),
-            RADIUS
-        );
+    double ms =
+        chrono::duration<double, milli>
+        (end - start).count();
 
-        auto end =
-            std::chrono::high_resolution_clock::now();
+    cout << fixed << setprecision(2);
+    cout << "Execution Time: " << ms << " ms\n";
 
-        double ms =
-            std::chrono::duration<double,
-            std::milli>(end - start).count();
+    vector<unsigned char> outImage(N);
 
-        totalMs += ms;
+    for (int i = 0; i < N; i++) {
+
+        float v =
+            max(0.0f,
+            min(1.0f, output[i]));
+
+        outImage[i] =
+            static_cast<unsigned char>(v * 255.0f);
     }
 
-    double avgMs = totalMs / REPS;
+    stbi_write_png(
+        "output_v4.png",
+        width,
+        height,
+        1,
+        outImage.data(),
+        width
+    );
 
-    // =====================================================================
-    // Performance Metrics
-    // =====================================================================
-
-    double pixelsProcessed =
-        static_cast<double>(WIDTH) * HEIGHT;
-
-    double mpixPerSec =
-        (pixelsProcessed / 1e6)
-        / (avgMs / 1000.0);
-
-    // Separable convolution:
-    // 2 passes × (2R+1) multiply-adds
-    long long operationsPerPixel =
-        2 * (2 * RADIUS + 1) * 2;
-
-    double totalOps =
-        pixelsProcessed * operationsPerPixel;
-
-    double gflops =
-        totalOps / (avgMs / 1000.0) / 1e9;
-
-    // =====================================================================
-    // Results
-    // =====================================================================
-
-    std::cout << std::fixed
-              << std::setprecision(2);
-
-    std::cout << "Average Execution Time : "
-              << avgMs << " ms\n";
-
-    std::cout << "Throughput             : "
-              << mpixPerSec << " MPix/s\n";
-
-    std::cout << "Estimated GFLOPS       : "
-              << gflops << " GFLOPS\n";
-
-    // =====================================================================
-    // Hardware Analysis Notes
-    // =====================================================================
-
-    std::cout << "\nOptimization Summary:\n";
-
-    std::cout << " - OpenMP Parallelism\n";
-    std::cout << " - AVX2 SIMD Vectorization\n";
-    std::cout << " - FMA Instructions\n";
-    std::cout << " - Cache-Aware Tiling\n";
-    std::cout << " - Separable Gaussian Filter\n";
-
-    std::cout << "\nExpected Bottleneck:\n";
-    std::cout << "Memory bandwidth / cache locality\n";
-
-    std::cout << "\nBenchmark complete.\n";
+    cout << "Saved: output_v4.png\n";
 
     return 0;
 }

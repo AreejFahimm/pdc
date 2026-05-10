@@ -476,8 +476,11 @@ int main(int argc, char* argv[])
     int WIDTH;
 int HEIGHT;
 
-const int RADIUS = 8;
-const float SIGMA = 4.0f;
+//     const int RADII[]  = {1, 2, 3, 5};
+// const float SIGMAS[] = {0.8f, 1.2f, 1.8f, 2.8f};
+
+const int RADIUS = 5;
+const float SIGMA = 2.8f;
 
     cout << fixed << setprecision(2);
 
@@ -517,7 +520,7 @@ vector<float> transposed2;
 // Load Input Image
 // =====================================================================
 
-const char* IMAGE_PATH = "input.jpeg";
+const char* IMAGE_PATH = "1024.png";
 
 int channels;
 

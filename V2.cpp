@@ -1,30 +1,24 @@
 // ============================================================================
-// openmp_naive_2d_convolution.cpp
-// V2 – OpenMP Naive 2D Gaussian Convolution
-// PDC Spring 2026 Project
-//
-// Compile:
-//    g++ -O3 -fopenmp openmp_naive_2d_convolution.cpp -o openmp_v2
-//
-// Run:
-//    ./openmp_v2 [threads]
-//
-// Example:
-//    ./openmp_v2 8
+// V2 - OpenMP Naive 2D Gaussian Convolution
 // ============================================================================
 
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
-#include <cstdlib>
 #include <omp.h>
 
-// ============================================================================
-// Generate 2D Gaussian Kernel
-// ============================================================================
-void generateGaussianKernel2D(std::vector<float>& kernel,
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+using namespace std;
+
+void generateGaussianKernel2D(vector<float>& kernel,
                               int radius,
                               float sigma)
 {
@@ -38,7 +32,7 @@ void generateGaussianKernel2D(std::vector<float>& kernel,
         for (int x = -radius; x <= radius; x++) {
 
             float value =
-                std::exp(-(x * x + y * y) /
+                exp(-(x * x + y * y) /
                 (2.0f * sigma * sigma));
 
             kernel[(y + radius) * size + (x + radius)] = value;
@@ -47,14 +41,10 @@ void generateGaussianKernel2D(std::vector<float>& kernel,
         }
     }
 
-    // Normalize
     for (float& v : kernel)
         v /= sum;
 }
 
-// ============================================================================
-// OpenMP Parallel Naive 2D Convolution
-// ============================================================================
 void convolution2D_OpenMP(const float* input,
                           float* output,
                           int width,
@@ -64,7 +54,6 @@ void convolution2D_OpenMP(const float* input,
 {
     int kernelSize = 2 * radius + 1;
 
-    // Parallelize outer row loop
     #pragma omp parallel for schedule(static)
     for (int r = 0; r < height; r++) {
 
@@ -72,16 +61,17 @@ void convolution2D_OpenMP(const float* input,
 
             float sum = 0.0f;
 
-            // Full 2D convolution
             for (int ky = -radius; ky <= radius; ky++) {
 
                 for (int kx = -radius; kx <= radius; kx++) {
 
-                    int rr = std::max(0,
-                             std::min(height - 1, r + ky));
+                    int rr =
+                        max(0,
+                        min(height - 1, r + ky));
 
-                    int cc = std::max(0,
-                             std::min(width - 1, c + kx));
+                    int cc =
+                        max(0,
+                        min(width - 1, c + kx));
 
                     float pixel =
                         input[rr * width + cc];
@@ -99,155 +89,102 @@ void convolution2D_OpenMP(const float* input,
     }
 }
 
-// ============================================================================
-// Main Driver
-// ============================================================================
 int main(int argc, char* argv[])
 {
-    // =====================================================================
-    // User-controlled thread count
-    // =====================================================================
     int NUM_THREADS =
-        (argc > 1) ? std::atoi(argv[1])
-                   : omp_get_max_threads();
+        (argc > 1)
+        ? atoi(argv[1])
+        : omp_get_max_threads();
 
     omp_set_num_threads(NUM_THREADS);
 
-    // =====================================================================
-    // Image Parameters
-    // =====================================================================
-    const int WIDTH  = 2048;
-    const int HEIGHT = 2048;
+    const char* IMAGE_PATH = "1024.png";
 
-    const int RADIUS = 8;
-    const float SIGMA = 4.0f;
+    int width, height, channels;
 
-    const int N = WIDTH * HEIGHT;
+    unsigned char* img =
+        stbi_load(
+            IMAGE_PATH,
+            &width,
+            &height,
+            &channels,
+            1
+        );
 
-    // =====================================================================
-    // Display Info
-    // =====================================================================
-    std::cout << "=====================================================\n";
-    std::cout << " OpenMP Naive 2D Gaussian Convolution (V2)\n";
-    std::cout << "=====================================================\n";
-
-    std::cout << "Image Size    : "
-              << WIDTH << " x " << HEIGHT << "\n";
-
-    std::cout << "Kernel Radius : "
-              << RADIUS << "\n";
-
-    std::cout << "Kernel Size   : "
-              << (2 * RADIUS + 1)
-              << " x "
-              << (2 * RADIUS + 1)
-              << "\n";
-
-    std::cout << "OMP Threads   : "
-              << NUM_THREADS << "\n\n";
-
-    // =====================================================================
-    // Allocate Memory
-    // =====================================================================
-    std::vector<float> input(N);
-    std::vector<float> output(N);
-    std::vector<float> kernel;
-
-    // =====================================================================
-    // Generate Random Image
-    // =====================================================================
-    for (int i = 0; i < N; i++) {
-        input[i] =
-            static_cast<float>(rand() % 256) / 255.0f;
+    if (!img) {
+        cout << "Failed to load image.\n";
+        return -1;
     }
 
-    // =====================================================================
-    // Generate Gaussian Kernel
-    // =====================================================================
-    generateGaussianKernel2D(kernel, RADIUS, SIGMA);
+    int N = width * height;
 
-    // =====================================================================
-    // Warm-up Run
-    // =====================================================================
+    vector<float> input(N);
+    vector<float> output(N);
+
+    for (int i = 0; i < N; i++) {
+        input[i] = img[i] / 255.0f;
+    }
+
+    stbi_image_free(img);
+
+    //     const int RADII[]  = {1, 2, 3, 5};
+// const float SIGMAS[] = {0.8f, 1.2f, 1.8f, 2.8f};
+
+    const int RADIUS = 5;
+    const float SIGMA = 2.8f;
+
+    vector<float> kernel;
+
+    generateGaussianKernel2D(
+        kernel,
+        RADIUS,
+        SIGMA
+    );
+
+    auto start =
+        chrono::high_resolution_clock::now();
+
     convolution2D_OpenMP(
         input.data(),
         output.data(),
-        WIDTH,
-        HEIGHT,
+        width,
+        height,
         kernel.data(),
         RADIUS
     );
 
-    // =====================================================================
-    // Timed Benchmark
-    // =====================================================================
-    const int REPS = 3;
+    auto end =
+        chrono::high_resolution_clock::now();
 
-    double totalMs = 0.0;
+    double ms =
+        chrono::duration<double, milli>
+        (end - start).count();
 
-    for (int rep = 0; rep < REPS; rep++) {
+    cout << fixed << setprecision(2);
+    cout << "Execution Time: " << ms << " ms\n";
 
-        auto start =
-            std::chrono::high_resolution_clock::now();
+    vector<unsigned char> outImage(N);
 
-        convolution2D_OpenMP(
-            input.data(),
-            output.data(),
-            WIDTH,
-            HEIGHT,
-            kernel.data(),
-            RADIUS
-        );
+    for (int i = 0; i < N; i++) {
 
-        auto end =
-            std::chrono::high_resolution_clock::now();
+        float v =
+            max(0.0f,
+            min(1.0f, output[i]));
 
-        double ms =
-            std::chrono::duration<double,
-            std::milli>(end - start).count();
-
-        totalMs += ms;
+        outImage[i] =
+            static_cast<unsigned char>(v * 255.0f);
     }
 
-    double avgMs = totalMs / REPS;
+    stbi_write_png(
+        "output_v2.png",
+        width,
+        height,
+        1,
+        outImage.data(),
+        width
+    );
 
-    // =====================================================================
-    // Performance Metrics
-    // =====================================================================
-
-    double pixelsProcessed =
-        static_cast<double>(WIDTH) * HEIGHT;
-
-    double mpixPerSec =
-        (pixelsProcessed / 1e6) / (avgMs / 1000.0);
-
-    long long operationsPerPixel =
-        (2 * RADIUS + 1) *
-        (2 * RADIUS + 1) * 2;
-
-    double totalOps =
-        pixelsProcessed * operationsPerPixel;
-
-    double gflops =
-        totalOps / (avgMs / 1000.0) / 1e9;
-
-    // =====================================================================
-    // Results
-    // =====================================================================
-
-    std::cout << std::fixed
-              << std::setprecision(2);
-
-    std::cout << "Average Execution Time : "
-              << avgMs << " ms\n";
-
-    std::cout << "Throughput             : "
-              << mpixPerSec << " MPix/s\n";
-
-    std::cout << "Estimated GFLOPS       : "
-              << gflops << " GFLOPS\n";
-
-    std::cout << "\nBenchmark complete.\n";
+    cout << "Saved: output_v2.png\n";
 
     return 0;
 }
